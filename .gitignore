@@ -1,4 +1,3 @@
-RecSys/
 # Ignore virtual environment
 venv/
 .env/
