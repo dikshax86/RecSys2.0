@@ -1,0 +1,169 @@
+"""
+models/sasrec.py
+----------------
+SASRec: Self-Attentive Sequential Recommendation.
+(Kang & McAuley, 2018 — adapted for ideology-aware items)
+
+Input  : sequence of tweet embeddings  (B, L, d)
+         attention mask for padding    (B, L)
+Output : sequence representation       (B, d)
+         (the hidden state at the last real position)
+
+Architecture:
+    Positional encoding
+    → N × (Causal Multi-Head Self-Attention + FFN + LayerNorm + Dropout)
+    → Output at last non-padding position
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class SASRecBlock(nn.Module):
+    """One Transformer block with causal self-attention."""
+
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1):
+        super().__init__()
+        self.attn   = nn.MultiheadAttention(
+            d_model, num_heads, dropout=dropout, batch_first=True
+        )
+        self.ff     = FeedForward(d_model, dropout)
+        self.norm1  = nn.LayerNorm(d_model)
+        self.norm2  = nn.LayerNorm(d_model)
+        self.drop   = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        x:               torch.Tensor,              # (B, L, d)
+        key_padding_mask: torch.Tensor | None = None,  # (B, L) bool, True=pad
+        causal_mask:      torch.Tensor | None = None,  # (L, L) bool — passed in from SASRec
+    ) -> torch.Tensor:
+
+        # Self-attention with residual.
+        # key_padding_mask is intentionally NOT passed to MHA.
+        #
+        # Why: for left-padded sequences, positions 0..k-1 are all padding.
+        # With key_padding_mask ON, position i (padding) can only attend to
+        # positions ≤ i, all of which are also masked → softmax([-inf,...]) = NaN.
+        # In the BACKWARD pass, NaN attn_weights cause ∂L/∂V = NaN × 0 = NaN
+        # (IEEE 754), which propagates NaN gradients into all shared weights
+        # (TweetEncoder, FusionModule, etc.), corrupting the entire model after
+        # the first optimizer step.
+        #
+        # Without key_padding_mask: padding positions can attend to each other.
+        # Since item_embedding(PAD_IDX=0) is zeroed by padding_idx, padding keys
+        # contribute near-zero to attention values — effectively ignored in practice.
+        # The causal mask is still applied, so information cannot flow from future
+        # to past positions.
+        attn_out, _ = self.attn(
+            x, x, x,
+            attn_mask = causal_mask,
+        )
+        attn_out = torch.nan_to_num(attn_out, nan=0.0)   # safety net
+        x = self.norm1(x + self.drop(attn_out))
+
+        # FFN with residual
+        x = self.norm2(x + self.ff(x))
+
+        # Belt-and-suspenders: ensure no NaN escapes this block and contaminates
+        # the next block's keys/values.
+        x = torch.nan_to_num(x, nan=0.0)
+        return x
+
+
+class SASRec(nn.Module):
+    """
+    Parameters
+    ----------
+    d_model     : embedding / hidden dimension
+    num_heads   : attention heads
+    num_layers  : number of transformer blocks
+    max_seq_len : maximum sequence length (for positional encoding)
+    dropout     : dropout probability
+    """
+
+    def __init__(
+        self,
+        d_model:     int   = 64,
+        num_heads:   int   = 2,
+        num_layers:  int   = 2,
+        max_seq_len: int   = 50,
+        dropout:     float = 0.1,
+    ):
+        super().__init__()
+        self.d_model = d_model
+
+        # Learnable positional encoding
+        self.pos_embedding = nn.Embedding(max_seq_len + 1, d_model)
+
+        self.blocks = nn.ModuleList([
+            SASRecBlock(d_model, num_heads, dropout)
+            for _ in range(num_layers)
+        ])
+
+        # Pre-build causal mask once; avoids re-allocating on every forward call
+        causal = torch.triu(
+            torch.ones(max_seq_len, max_seq_len, dtype=torch.bool), diagonal=1
+        )
+        self.register_buffer("causal_mask", causal)   # (max_seq_len, max_seq_len)
+
+        self.norm  = nn.LayerNorm(d_model)
+        self.drop  = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        item_embs:    torch.Tensor,              # (B, L, d)  from TweetEncoder
+        padding_mask: torch.Tensor | None = None,# (B, L) bool True=pad
+    ) -> torch.Tensor:                           # (B, d)
+        """
+        Returns the hidden state at the last non-padding position for each
+        sequence in the batch.
+        """
+        B, L, d = item_embs.shape
+
+        # Positional ids: 1, 2, ..., L
+        positions = torch.arange(1, L + 1, device=item_embs.device)  # (L,)
+        positions = positions.unsqueeze(0).expand(B, -1)              # (B, L)
+        pos_emb   = self.pos_embedding(positions)                      # (B, L, d)
+
+        x = self.drop(item_embs + pos_emb)
+
+        # Slice the pre-built mask to the actual sequence length
+        causal = self.causal_mask[:L, :L]   # (L, L) — no allocation
+
+        for block in self.blocks:
+            x = block(x, key_padding_mask=padding_mask, causal_mask=causal)
+
+        x = self.norm(x)    # (B, L, d)
+
+        # Sequences are LEFT-padded: real items are right-aligned, so the last
+        # real item is ALWAYS at position L-1 regardless of sequence length.
+        # The old formula  (count_of_real_items - 1)  was wrong for padded sequences:
+        #   e.g. [PAD×49, item]  → formula gave index 0 (a PAD), correct is 49.
+        out = x[:, -1, :]   # (B, d)
+
+        return out    # (B, d)
+
+
+def make_padding_mask(item_ids: torch.Tensor, pad_idx: int = 0) -> torch.Tensor:
+    """
+    Build padding mask from item id tensor.
+    Returns bool tensor (B, L), True where item_id == pad_idx.
+    """
+    return item_ids == pad_idx
