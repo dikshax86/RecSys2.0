@@ -1,0 +1,52 @@
+{
+  "total_users": 8164,
+  "steps_per_user": 20,
+  "total_rounds": 163280,
+  "arms": [
+    -0.3,
+    -0.15,
+    0.0,
+    0.15,
+    0.3
+  ],
+  "alpha": 1.5,
+  "tau": 0.3,
+  "feature_dim": 10,
+  "tweet_pool_size": 5940,
+  "network_users": 8160,
+  "engagement_mode": "MODEL-BASED (learned)",
+  "behavior_model_path": "/home/diksha/workspace/Term2/Projects/RS/final_PROJECT/bandit/outputs/behavior_model.pt",
+  "total_time_seconds": 479.9384808540344,
+  "linucb_arm_stats": {
+    "0": {
+      "arm_value": -0.3,
+      "pulls": 6721,
+      "pull_fraction": 0.0411624203821656,
+      "theta_norm": 1.3614631922240708
+    },
+    "1": {
+      "arm_value": -0.15,
+      "pulls": 75755,
+      "pull_fraction": 0.4639576188143067,
+      "theta_norm": 3.023337214531933
+    },
+    "2": {
+      "arm_value": 0.0,
+      "pulls": 6910,
+      "pull_fraction": 0.04231994120529153,
+      "theta_norm": 0.7074861034627818
+    },
+    "3": {
+      "arm_value": 0.15,
+      "pulls": 70175,
+      "pull_fraction": 0.42978319451249386,
+      "theta_norm": 2.5978273162270686
+    },
+    "4": {
+      "arm_value": 0.3,
+      "pulls": 3719,
+      "pull_fraction": 0.022776825085742282,
+      "theta_norm": 1.1386230065572407
+    }
+  }
+}

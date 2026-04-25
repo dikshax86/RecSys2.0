@@ -1,0 +1,21 @@
+RecSys/
+# Ignore virtual environment
+venv/
+.env/
+
+# Ignore datasets
+data/
+dataset/
+datasets/
+
+
+# OR if you want specific ones only:
+rt_seq*.pkl
+scored_rt_seq*.pkl
+
+# Ignore python cache
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
