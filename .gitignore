@@ -4,9 +4,11 @@ venv/
 .env/
 
 # Ignore datasets
-data/
+data/processed
 dataset/
 datasets/
+RecSys/checkpoints/best_model/data/
+bandit/outputs/behavior_model/data/
 
 
 # OR if you want specific ones only:
