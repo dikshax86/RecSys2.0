@@ -589,7 +589,7 @@ def main():
     ckpt_path = args.checkpoint or str(Path(config.paths.checkpoint_dir) / "best_model")
     bandit_path = args.bandit_params or str(BANDIT_DIR / "outputs" / "linucb_params.json")
     # processed_dir = args.data_dir if args.data_dir else config.paths.processed_dir
-    processed_dir = "/home/diksha/workspace/Term2/Projects/RS/final_PROJECT/data/processed"
+    processed_dir = "/kaggle/input/datasets/dknights/data-processed"
     # Override config so downstream functions also use the correct path
     config.paths.processed_dir = processed_dir
 
