@@ -574,8 +574,8 @@ def main():
                         help="Path to pre-trained recommender checkpoint (fixed-delta baseline)")
     parser.add_argument("--bandit_params", type=str, default=None,
                         help="Path to linucb_params.json")
-    parser.add_argument("--data_dir",      type=str, default=None,
-                        help="Path to processed data directory (with .pkl files)")
+    # parser.add_argument("--data_dir",      type=str, default=None,
+    #                     help="Path to processed data directory (with .pkl files)")
     parser.add_argument("--skip_retrain",  action="store_true",
                         help="Skip retraining; only evaluate existing checkpoint with bandit deltas")
     args = parser.parse_args()
@@ -588,7 +588,8 @@ def main():
 
     ckpt_path = args.checkpoint or str(Path(config.paths.checkpoint_dir) / "best_model")
     bandit_path = args.bandit_params or str(BANDIT_DIR / "outputs" / "linucb_params.json")
-    processed_dir = args.data_dir if args.data_dir else config.paths.processed_dir
+    # processed_dir = args.data_dir if args.data_dir else config.paths.processed_dir
+    processed_dir = "/home/diksha/workspace/Term2/Projects/RS/final_PROJECT/data/processed"
     # Override config so downstream functions also use the correct path
     config.paths.processed_dir = processed_dir
 
