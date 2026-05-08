@@ -29,14 +29,14 @@ TWEET_COL_URLS = 9
 TWEET_COL_MENTIONS = 10
 TWEET_COL_IS_REPLY = 11
 
-# Bandit arms: ideology window sizes (all positive, aligned with recommender's δ values)
-# These define the width of the ideology window the recommender uses for contrastive loss.
-# Aligned with recommender's trained δ=0.2 to avoid structural mismatch.
-ARMS = [0.05, 0.1, 0.15, 0.2, 0.3]
+# Bandit arms: ideological shifts
+# Arms must be within [-TAU, +TAU] so they aren't all clamped to the same value.
+# Gives the bandit meaningful granularity: no-shift, small, medium, and full-TAU shifts.
+ARMS = [-0.3, -0.15, 0.0, 0.15, 0.3]
 NUM_ARMS = len(ARMS)
 
 # LinUCB
-ALPHA = 3.0            # exploration parameter (high: prevent policy collapse to single arm)
+ALPHA = 1.5            # exploration parameter (raised: force more exploration before converging)
 FEATURE_DIM = 10       # context vector dimension
 
 # Narrative Bridge
@@ -57,7 +57,6 @@ REWARD_DIVERSITY = 2.0       # diversity bonus (raised from 0.3: makes non-zero 
 REWARD_DEPOLARIZE = 1.5      # bonus when user moves toward center after engaging
 REWARD_ECHO_PENALTY = 0.5    # penalty for recommending delta=0 (discourages echo chamber)
 REWARD_PENALTY = 0.05        # overshoot penalty (lowered: less fear of non-zero arms)
-REWARD_RETRIEVAL_BONUS = 1.0 # bonus when recommended tweet falls within the ideology window
 
 # Tweet pool
 TWEET_POOL_SIZE = 200_000       # max tweets to keep in pool

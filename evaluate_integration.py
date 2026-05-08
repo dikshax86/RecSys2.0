@@ -355,10 +355,6 @@ def main():
                         help="Path to bandit outputs (linucb_params.json, simulation_summary.json)")
     parser.add_argument("--save_dir",   type=str, default=None,
                         help="Where to save checkpoint and results")
-    parser.add_argument("--warmup_epochs", type=int, default=2,
-                        help="Phase 1: epochs with fixed δ=0.2 (warm start)")
-    parser.add_argument("--finetune_epochs", type=int, default=1,
-                        help="Phase 2: epochs with bandit δ (fine-tune)")
     args = parser.parse_args()
 
     # Resolve paths
@@ -370,6 +366,10 @@ def main():
     bandit_dir = args.bandit_dir or str(PROJECT_DIR / "bandit" / "outputs")
     save_dir = Path(args.save_dir) if args.save_dir else PROJECT_DIR / "outputs"
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    # Limit training samples per user for faster dataset building
+    config.data.max_train_targets_per_user = args.max_targets
+    config.data.train_target_stride = max(1, 800 // args.max_targets)  # stride to spread across history
 
     device = resolve_device(args.device if args.device != "auto" else config.train.device)
     print(f"Device: {device}")
@@ -403,15 +403,22 @@ def main():
     print(f"  Mean |delta|: {np.mean(list(user_deltas.values())):.4f}")
 
     # ══════════════════════════════════════════════════════════════════════
-    #  STEP 2: Build datasets
+    #  STEP 2: Build datasets with bandit deltas
     # ══════════════════════════════════════════════════════════════════════
     print("\n" + "=" * 65)
-    print("STEP 2: Build datasets")
+    print("STEP 2: Build datasets with bandit deltas")
     print("=" * 65)
 
     item2idx, idx2item, item_ideo_dict = build_item_vocab(scored, config.data.min_item_freq)
 
-    # Item catalog (shared across phases)
+    train_ds = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
+                                          config, "train", user_deltas, 0.15)
+    val_ds = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
+                                        config, "val", user_deltas, 0.15)
+    test_ds = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
+                                         config, "test", user_deltas, 0.15)
+
+    # Item catalog
     num_items = (max(item2idx.values()) + 1) if item2idx else 1
     item_ideo_arr = np.zeros(num_items, dtype=np.float32)
     for idx, sc in item_ideo_dict.items():
@@ -423,27 +430,15 @@ def main():
     neg_sampler = NegativeSampler(item_ideo_dict, strategy="hard", band=config.loss.hard_neg_band)
     collate = CollateWithNegatives(neg_sampler, item_ideo_arr, num_negatives=config.loss.num_negatives)
 
-    # Phase 1 datasets: fixed δ=0.2 (warm start)
-    print("\n  Phase 1 datasets (fixed δ=0.2):")
-    train_ds_fixed = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
-                                                config, "train", {}, 0.2)
-    val_ds_fixed = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
-                                              config, "val", {}, 0.2)
-
-    # Phase 2 datasets: bandit deltas (fine-tune)
-    print("\n  Phase 2 datasets (bandit δ):")
-    train_ds_bandit = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
-                                                 config, "train", user_deltas, 0.15)
-    val_ds_bandit = build_dataset_with_deltas(scored, states, item2idx, item_ideo_dict, user2idx,
-                                               config, "val", user_deltas, 0.15)
-
     common = dict(batch_size=config.train.batch_size, num_workers=0, collate_fn=collate)
+    train_dl = DataLoader(train_ds, shuffle=True, **common)
+    val_dl = DataLoader(val_ds, shuffle=False, **common)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  STEP 3: Warm-Start Training (two phases)
+    #  STEP 3: Load graph + train model
     # ══════════════════════════════════════════════════════════════════════
     print("\n" + "=" * 65)
-    print("STEP 3: Warm-Start Training")
+    print("STEP 3: Train recommender with bandit deltas")
     print("=" * 65)
 
     graph_x, graph_edge_index = load_graph_tensors(data_dir, device)
@@ -452,33 +447,11 @@ def main():
     with torch.no_grad():
         all_graph_embs = model.graph_encoder(graph_x, graph_edge_index)
 
-    # Phase 1: Train with fixed δ=0.2 (establishes base ranking capability)
-    print(f"\n  Phase 1: Fixed δ=0.2 for {args.warmup_epochs} epochs (warm start)")
-    print("  " + "-" * 55)
-    train_dl_fixed = DataLoader(train_ds_fixed, shuffle=True, **common)
-    val_dl_fixed = DataLoader(val_ds_fixed, shuffle=False, **common)
-
-    model, hit10_phase1 = train_model(
-        model, train_dl_fixed, val_dl_fixed, item_catalog,
+    model, best_hit10 = train_model(
+        model, train_dl, val_dl, item_catalog,
         graph_x, graph_edge_index, all_graph_embs,
-        config, device, args.warmup_epochs,
+        config, device, args.epochs,
     )
-    print(f"  Phase 1 done: val hit@10={hit10_phase1:.4f}")
-
-    # Phase 2: Fine-tune with bandit deltas (adapts to per-user windows)
-    print(f"\n  Phase 2: Bandit δ for {args.finetune_epochs} epochs (fine-tune)")
-    print("  " + "-" * 55)
-    train_dl_bandit = DataLoader(train_ds_bandit, shuffle=True, **common)
-    val_dl_bandit = DataLoader(val_ds_bandit, shuffle=False, **common)
-
-    model, hit10_phase2 = train_model(
-        model, train_dl_bandit, val_dl_bandit, item_catalog,
-        graph_x, graph_edge_index, all_graph_embs,
-        config, device, args.finetune_epochs,
-    )
-    print(f"  Phase 2 done: val hit@10={hit10_phase2:.4f}")
-
-    best_hit10 = max(hit10_phase1, hit10_phase2)
 
     # Save checkpoint
     ckpt_path = save_dir / "best_model_bandit_integrated.pt"
