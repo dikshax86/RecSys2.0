@@ -355,6 +355,8 @@ def main():
                         help="Path to bandit outputs (linucb_params.json, simulation_summary.json)")
     parser.add_argument("--save_dir",   type=str, default=None,
                         help="Where to save checkpoint and results")
+    parser.add_argument("--resume",     type=str, default=None,
+                        help="Path to checkpoint .pt file to resume training from")
     args = parser.parse_args()
 
     # Resolve paths
@@ -441,6 +443,14 @@ def main():
     graph_x, graph_edge_index = load_graph_tensors(data_dir, device)
 
     model = build_model(item_catalog.num_items, config).to(device)
+
+    # Resume from checkpoint if provided
+    if args.resume:
+        print(f"  Resuming from: {args.resume}")
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        print(f"  Loaded checkpoint (previous best hit@10={ckpt.get('best_hit10', 'N/A')})")
+
     with torch.no_grad():
         all_graph_embs = model.graph_encoder(graph_x, graph_edge_index)
 

@@ -2,6 +2,7 @@ RecSys1/
 # Ignore virtual environment
 venv/
 .env/
+report.tex
 
 # Ignore datasets
 data/processed
