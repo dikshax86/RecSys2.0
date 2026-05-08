@@ -333,18 +333,11 @@ class BanditEnvironment:
 
     def _compute_reward(self, engaged, delta):
         """
-        Redesigned reward that balances engagement WITH depolarization.
+        Reward balancing engagement, depolarization, and retrieval quality.
 
-        R = ENGAGE * engaged                              (base: reward engagement)
-          + DIVERSITY * |delta| * engaged                  (bonus: engaged with shifted content)
-          + DEPOLARIZE * toward_center * engaged           (bonus: user moved toward center)
-          - ECHO_PENALTY * (delta==0) * engaged            (penalty: echo chamber behavior)
-          - PENALTY * max(0, |delta| - tau)^2              (safety: penalize overshoot)
-
-        The key insight: without the echo penalty and depolarization bonus,
-        the bandit always converges to delta=0 (echo chamber) because engagement
-        is highest for zero-shift content. The new terms make non-zero drifts
-        competitive when they successfully move users toward the center.
+        Includes a retrieval bonus: if the user's next actual retweet falls within
+        the proposed ideology window [current, current + delta], the bandit gets
+        extra reward — aligning its objective with the recommender's window.
         """
         r = config.REWARD_ENGAGE * engaged
 
@@ -353,9 +346,22 @@ class BanditEnvironment:
 
         # Depolarization bonus: reward if user moved toward center
         if engaged and hasattr(self, 'initial_ideology'):
-            # Check if current position is closer to center than starting position
             toward_center = 1.0 if abs(self.current_ideology) < abs(self.initial_ideology) else 0.0
             r += config.REWARD_DEPOLARIZE * toward_center * engaged
+
+        # Retrieval bonus: does the recommended tweet fall within the ideology window?
+        # Window = [current_ideology, current_ideology + delta] (direction-aware)
+        if engaged and hasattr(self, 'session_log') and self.session_log:
+            last = self.session_log[-1] if self.session_log else None
+            if last is None:
+                tweet_ideo = self.current_ideology + delta
+            else:
+                tweet_ideo = last.get("psi_tweet", self.current_ideology + delta)
+            window_lo = min(self.current_ideology, self.current_ideology + delta)
+            window_hi = max(self.current_ideology, self.current_ideology + delta)
+            margin = 0.05
+            if window_lo - margin <= tweet_ideo <= window_hi + margin:
+                r += config.REWARD_RETRIEVAL_BONUS
 
         # Echo chamber penalty: discourage always picking delta=0
         if abs(delta) < 0.01:
