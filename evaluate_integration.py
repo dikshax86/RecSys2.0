@@ -367,9 +367,6 @@ def main():
     save_dir = Path(args.save_dir) if args.save_dir else PROJECT_DIR / "outputs"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Limit training samples per user for faster dataset building
-    config.data.max_train_targets_per_user = args.max_targets
-    config.data.train_target_stride = max(1, 800 // args.max_targets)  # stride to spread across history
 
     device = resolve_device(args.device if args.device != "auto" else config.train.device)
     print(f"Device: {device}")
